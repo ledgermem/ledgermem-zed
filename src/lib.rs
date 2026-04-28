@@ -138,9 +138,10 @@ fn run_search(settings: &LedgerMemSettings, args: &[String]) -> Result<SlashComm
         text.push_str(&header);
         text.push_str(&m.content);
         text.push_str("\n\n");
+        let score_suffix = m.score.map(|s| format!(" ({s:.2})")).unwrap_or_default();
         sections.push(SlashCommandOutputSection {
             range: (start as u32)..(text.len() as u32),
-            label: format!("Memory {}", short_id(&m.id)),
+            label: format!("Memory {}{}", short_id(&m.id), score_suffix),
         });
     }
     Ok(SlashCommandOutput { text, sections })
@@ -180,8 +181,12 @@ struct Memory {
     content: String,
     #[serde(default, rename = "createdAt")]
     _created_at: String,
+    // Relevance score returned by /v1/search. Previously this was named
+    // `_score`, which silenced the dead-code warning but also silently dropped
+    // the value from the section label — search results were rendered without
+    // any signal of which match was the strongest.
     #[serde(default)]
-    _score: Option<f64>,
+    score: Option<f64>,
 }
 
 impl Memory {
