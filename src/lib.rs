@@ -43,7 +43,13 @@ fn default_limit() -> u32 {
 impl LedgerMemSettings {
     fn load(worktree: Option<&Worktree>) -> Result<Self, String> {
         // Zed exposes user settings via LspSettings::for_worktree using a stable key.
-        let raw = LspSettings::for_worktree("ledgermem", worktree.unwrap_or(&dummy_worktree()))
+        // We require a real Worktree provided by Zed at runtime — the previous
+        // implementation forged one with `mem::zeroed()` which is undefined
+        // behavior (Worktree wraps a non-null host handle).
+        let worktree = worktree.ok_or_else(|| {
+            "LedgerMem: no worktree available — open a project before invoking the command.".to_string()
+        })?;
+        let raw = LspSettings::for_worktree("ledgermem", worktree)
             .map_err(|e| e.to_string())?;
         let value = raw.settings.unwrap_or(serde_json::json!({}));
         serde_json::from_value::<LedgerMemSettings>(value)
@@ -59,12 +65,6 @@ impl LedgerMemSettings {
         }
         Ok(())
     }
-}
-
-// SAFETY: a true Worktree is provided by Zed at runtime; we never construct one
-// ourselves in production. This is a placeholder for the rare unit-test path.
-fn dummy_worktree() -> Worktree {
-    unsafe { std::mem::zeroed() }
 }
 
 struct LedgerMemExtension;
@@ -140,7 +140,7 @@ fn run_search(settings: &LedgerMemSettings, args: &[String]) -> Result<SlashComm
         text.push_str("\n\n");
         sections.push(SlashCommandOutputSection {
             range: (start as u32)..(text.len() as u32),
-            label: format!("Memory {}", &m.id[..m.id.len().min(8)]),
+            label: format!("Memory {}", short_id(&m.id)),
         });
     }
     Ok(SlashCommandOutput { text, sections })
@@ -160,7 +160,7 @@ fn run_add(settings: &LedgerMemSettings, args: &[String]) -> Result<SlashCommand
     let memory = parse_single(&raw)?;
     let text = format!(
         "Saved memory `{}`:\n\n{}",
-        &memory.id[..memory.id.len().min(8)],
+        short_id(&memory.id),
         memory.content,
     );
     Ok(SlashCommandOutput {
@@ -214,12 +214,42 @@ fn http_post(settings: &LedgerMemSettings, path: &str, body: &str) -> Result<Str
             ("Accept".into(), "application/json".into()),
         ],
         body: Some(body.as_bytes().to_vec()),
-        redirect_policy: zed::http_client::RedirectPolicy::FollowAll,
+        // Do NOT follow redirects automatically — the Authorization header
+        // would be replayed to the redirect target, leaking the API key if a
+        // mis-configured or compromised endpoint redirects to a third party.
+        redirect_policy: zed::http_client::RedirectPolicy::NoFollow,
     })
     .map_err(|e| format!("HTTP error: {e}"))?;
 
     let body = String::from_utf8(response.body).map_err(|e| format!("non-UTF-8 response: {e}"))?;
+    if !(200..300).contains(&response.status_code) {
+        return Err(format!(
+            "LedgerMem HTTP {} on {}: {}",
+            response.status_code,
+            path,
+            truncate(&body, 200)
+        ));
+    }
     Ok(body)
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) && end > 0 {
+        end -= 1;
+    }
+    format!("{}...", &s[..end])
+}
+
+fn short_id(id: &str) -> String {
+    let mut end = id.len().min(8);
+    while !id.is_char_boundary(end) && end > 0 {
+        end -= 1;
+    }
+    id[..end].to_string()
 }
 
 zed::register_extension!(LedgerMemExtension);
