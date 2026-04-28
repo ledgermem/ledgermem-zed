@@ -188,7 +188,14 @@ impl Memory {
     fn preview(&self) -> String {
         let line = self.content.lines().next().unwrap_or("");
         if line.len() > 80 {
-            format!("{}...", &line[..77])
+            // `&line[..77]` panics if byte 77 falls inside a multibyte UTF-8
+            // sequence (very common for non-ASCII content). Walk back to the
+            // nearest char boundary first.
+            let mut end = 77;
+            while end > 0 && !line.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}...", &line[..end])
         } else {
             line.to_string()
         }
