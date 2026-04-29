@@ -1,14 +1,14 @@
-//! LedgerMem extension for the Zed editor.
+//! Mnemo extension for the Zed editor.
 //!
 //! Implements two slash commands for the chat panel:
-//! - `/lm-search <query>`: returns top matches from LedgerMem
+//! - `/lm-search <query>`: returns top matches from Mnemo
 //! - `/lm-add [content]`: stores the current selection (or supplied content) as a memory
 //!
-//! Configuration is read from Zed's settings under `ledgermem.*`:
-//!   "ledgermem": {
+//! Configuration is read from Zed's settings under `getmnemo.*`:
+//!   "getmnemo": {
 //!     "api_key": "...",
 //!     "workspace_id": "...",
-//!     "endpoint": "https://api.ledgermem.dev",
+//!     "endpoint": "https://api.getmnemo.dev",
 //!     "default_limit": 10
 //!   }
 
@@ -21,7 +21,7 @@ use zed_extension_api::{
 };
 
 #[derive(Debug, Deserialize, Clone)]
-struct LedgerMemSettings {
+struct MnemoSettings {
     #[serde(default)]
     api_key: String,
     #[serde(default)]
@@ -33,45 +33,45 @@ struct LedgerMemSettings {
 }
 
 fn default_endpoint() -> String {
-    "https://api.ledgermem.dev".to_string()
+    "https://api.getmnemo.dev".to_string()
 }
 
 fn default_limit() -> u32 {
     10
 }
 
-impl LedgerMemSettings {
+impl MnemoSettings {
     fn load(worktree: Option<&Worktree>) -> Result<Self, String> {
         // Zed exposes user settings via LspSettings::for_worktree using a stable key.
         // We require a real Worktree provided by Zed at runtime — the previous
         // implementation forged one with `mem::zeroed()` which is undefined
         // behavior (Worktree wraps a non-null host handle).
         let worktree = worktree.ok_or_else(|| {
-            "LedgerMem: no worktree available — open a project before invoking the command.".to_string()
+            "Mnemo: no worktree available — open a project before invoking the command.".to_string()
         })?;
-        let raw = LspSettings::for_worktree("ledgermem", worktree)
+        let raw = LspSettings::for_worktree("getmnemo", worktree)
             .map_err(|e| e.to_string())?;
         let value = raw.settings.unwrap_or(serde_json::json!({}));
-        serde_json::from_value::<LedgerMemSettings>(value)
-            .map_err(|e| format!("invalid ledgermem settings: {e}"))
+        serde_json::from_value::<MnemoSettings>(value)
+            .map_err(|e| format!("invalid getmnemo settings: {e}"))
     }
 
     fn ensure_ready(&self) -> Result<(), String> {
         if self.api_key.is_empty() {
-            return Err("Set `ledgermem.api_key` in your Zed settings.".into());
+            return Err("Set `getmnemo.api_key` in your Zed settings.".into());
         }
         if self.workspace_id.is_empty() {
-            return Err("Set `ledgermem.workspace_id` in your Zed settings.".into());
+            return Err("Set `getmnemo.workspace_id` in your Zed settings.".into());
         }
         Ok(())
     }
 }
 
-struct LedgerMemExtension;
+struct MnemoExtension;
 
-impl zed::Extension for LedgerMemExtension {
+impl zed::Extension for MnemoExtension {
     fn new() -> Self {
-        LedgerMemExtension
+        MnemoExtension
     }
 
     fn complete_slash_command_argument(
@@ -100,18 +100,18 @@ impl zed::Extension for LedgerMemExtension {
         args: Vec<String>,
         worktree: Option<&Worktree>,
     ) -> Result<SlashCommandOutput, String> {
-        let settings = LedgerMemSettings::load(worktree)?;
+        let settings = MnemoSettings::load(worktree)?;
         settings.ensure_ready()?;
 
         match command.name.as_str() {
             "lm-search" => run_search(&settings, &args),
             "lm-add" => run_add(&settings, &args),
-            other => Err(format!("unknown LedgerMem command: {other}")),
+            other => Err(format!("unknown Mnemo command: {other}")),
         }
     }
 }
 
-fn run_search(settings: &LedgerMemSettings, args: &[String]) -> Result<SlashCommandOutput, String> {
+fn run_search(settings: &MnemoSettings, args: &[String]) -> Result<SlashCommandOutput, String> {
     let query = args.join(" ");
     if query.trim().is_empty() {
         return Err("Usage: /lm-search <query>".into());
@@ -147,7 +147,7 @@ fn run_search(settings: &LedgerMemSettings, args: &[String]) -> Result<SlashComm
     Ok(SlashCommandOutput { text, sections })
 }
 
-fn run_add(settings: &LedgerMemSettings, args: &[String]) -> Result<SlashCommandOutput, String> {
+fn run_add(settings: &MnemoSettings, args: &[String]) -> Result<SlashCommandOutput, String> {
     let content = args.join(" ");
     if content.trim().is_empty() {
         return Err("Usage: /lm-add <content>  (or have a selection in the editor)".into());
@@ -167,7 +167,7 @@ fn run_add(settings: &LedgerMemSettings, args: &[String]) -> Result<SlashCommand
     Ok(SlashCommandOutput {
         sections: vec![SlashCommandOutputSection {
             range: 0..(text.len() as u32),
-            label: "LedgerMem".into(),
+            label: "Mnemo".into(),
         }],
         text,
     })
@@ -215,7 +215,7 @@ fn parse_single(raw: &str) -> Result<Memory, String> {
     serde_json::from_str(raw).map_err(|e| format!("parse error: {e}"))
 }
 
-fn http_post(settings: &LedgerMemSettings, path: &str, body: &str) -> Result<String, String> {
+fn http_post(settings: &MnemoSettings, path: &str, body: &str) -> Result<String, String> {
     let url = format!("{}{}", settings.endpoint.trim_end_matches('/'), path);
     let response = zed::http_client::fetch(&zed::http_client::HttpRequest {
         method: zed::http_client::HttpMethod::Post,
@@ -236,7 +236,7 @@ fn http_post(settings: &LedgerMemSettings, path: &str, body: &str) -> Result<Str
     let body = String::from_utf8(response.body).map_err(|e| format!("non-UTF-8 response: {e}"))?;
     if !(200..300).contains(&response.status_code) {
         return Err(format!(
-            "LedgerMem HTTP {} on {}: {}",
+            "Mnemo HTTP {} on {}: {}",
             response.status_code,
             path,
             truncate(&body, 200)
@@ -264,4 +264,4 @@ fn short_id(id: &str) -> String {
     id[..end].to_string()
 }
 
-zed::register_extension!(LedgerMemExtension);
+zed::register_extension!(MnemoExtension);

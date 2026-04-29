@@ -1,10 +1,10 @@
 [package]
-name = "ledgermem"
+name = "getmnemo"
 version = "0.1.0"
 edition = "2021"
 publish = false
-authors = ["Proofly <founders@proofly.dev>"]
-description = "LedgerMem extension for Zed."
+authors = ["Proofly <founders@getmnemo.xyz>"]
+description = "Mnemo extension for Zed."
 license = "MIT"
 
 [lib]
